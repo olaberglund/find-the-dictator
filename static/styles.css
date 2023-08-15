@@ -1,0 +1,46 @@
+html, body {
+    margin:0;
+    height: 100%;
+}
+
+body {
+    margin: 0;
+    background-color: black;
+    color: white;
+    line-height: 1.6;
+    font-size: 18px;
+}
+
+iframe {
+    flex: 1;
+    transition: flex 0.5s ease-in-out;
+}
+
+/* iframe:hover {
+    flex: 10;
+} */
+
+main {
+    display: flex;
+    height: 100%;
+}
+
+.stats-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.timer {
+    background-color: indigo;
+    flex: 1;
+}
+
+.leaderboard {
+    background-color: red;
+    flex: 1;
+}
+
+h1 {
+    position: absolute;
+}
