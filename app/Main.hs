@@ -75,20 +75,27 @@ urlpath = pack (symbolVal (Proxy :: Proxy s))
 
 modify :: Tag ByteString -> Tag ByteString
 modify (TagOpen "link" attrs) = TagOpen "link" (map (\(a, v) -> if a == "href" then ("href", toWiki v) else (a, v)) attrs)
-modify (TagOpen "a" attrs) | anyAttrValue (== "mw-file-description") attrs = TagOpen "a" [("style", "er-events: none; cursor: default;")]
-modify (TagOpen "sup" _) = TagOpen "sup" [("hidden", "hidden")]
+modify (TagOpen "a" attrs) | anyAttrValue (== "mw-file-description") attrs = TagOpen "a" [("style", "pointer-events: none; cursor: default;")]
+modify (TagOpen "a" attrs) = TagOpen "a" (map fixAttributes attrs <> [("style", "color: #3366cc;")])
+modify (TagOpen "sup" _) = TagOpen "sup" [displayNone]
 modify (TagOpen t attrs) = TagOpen t (map fixAttributes attrs)
 modify t = t
 
+displayNone :: Attribute ByteString
+displayNone = ("style", "display: none;")
+
 fixAttributes :: Attribute ByteString -> Attribute ByteString
 fixAttributes a = case a of
-  ("class", c) -> if c `S.member` hiddenClasses then ("hidden", "hidden") else a
-  ("href", h) -> ("href", toApp h)
+  ("class", c) -> if c `S.member` hiddenClasses then displayNone else a
+  ("id", c) -> if c `S.member` hiddenIds then displayNone else a
+  ("href", h) -> ("href", fixHref h)
   ("src", h) -> ("src", toWiki h)
   _ -> a
 
-toApp :: ByteString -> ByteString
-toApp = toAnother "//localhost:8080"
+fixHref :: ByteString -> ByteString
+fixHref h
+  | "/wiki/Help" `isPrefixOf` h = "#"
+  | otherwise = toAnother "//localhost:8080" h
 
 toWiki :: ByteString -> ByteString
 toWiki = toAnother "//en.wikipedia.org"
@@ -97,4 +104,7 @@ toAnother :: ByteString -> ByteString -> ByteString
 toAnother to h = if any (`isPrefixOf` h) ["//", "#"] then h else to <> h
 
 hiddenClasses :: Set ByteString
-hiddenClasses = S.fromList ["vector-header-container", "vector-dropdown mw-portlet mw-portlet-lang", "vector-page-toolbar", "mw-indicators", "reflist reflist-lower-alpha", "reflist reflist-columns references-column-width", "refbegin refbegin-columns references-column-width", "spoken-wikipedia sisterproject noprint haudio", "mw-footer-container", "navbar plainlinks hlist navbar-mini", "mw-editsection", "citation wikicite"]
+hiddenClasses = S.fromList ["vector-header-container", "vector-dropdown mw-portlet mw-portlet-lang", "vector-page-toolbar", "mw-indicators", "reflist reflist-lower-alpha", "reflist reflist-columns references-column-width", "refbegin refbegin-columns references-column-width", "spoken-wikipedia sisterproject noprint haudio", "mw-footer-container", "navbar plainlinks hlist navbar-mini", "mw-editsection", "citation wikicite", "metadata plainlinks asbox stub", "navbox authority-control", "navbox", "catlinks", "extiw", "reflist", "mw-references-wrap", "box-Very_long plainlinks metadata ambox ambox-style ambox-very_long", "external text", "navbox-styles"]
+
+hiddenIds :: Set ByteString
+hiddenIds = S.fromList ["References", "External_links"]
