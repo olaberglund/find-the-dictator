@@ -39,6 +39,12 @@ executable find-the-dictator
                     , text
                     , lucid-htmx
                     , servant-htmx
+                    , containers
+                    , tagsoup
+                    , req
+                    , fast-tagsoup
+                    , bytestring
+
 
     hs-source-dirs:   app
     default-language: Haskell2010

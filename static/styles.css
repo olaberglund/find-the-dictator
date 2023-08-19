@@ -12,13 +12,10 @@ body {
 }
 
 iframe {
-    flex: 1;
-    transition: flex 0.5s ease-in-out;
+    background-color: white;
+    flex: 2;
 }
 
-/* iframe:hover {
-    flex: 10;
-} */
 
 main {
     display: flex;
