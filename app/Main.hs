@@ -1,5 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -8,30 +9,49 @@
 
 module Main where
 
-import Data.ByteString (ByteString, isPrefixOf)
-import Data.List (any, find)
+import Data.Aeson (FromJSON)
+import Data.ByteString (ByteString, elem, isPrefixOf, split)
 import Data.Set (Set)
 import qualified Data.Set as S
-import Data.Text hiding (any, elem, filter, find, isPrefixOf, map)
+import Data.Text hiding (any, elem, filter, find, head, isPrefixOf, map, split)
+import GHC.Generics (Generic)
 import GHC.TypeLits (KnownSymbol, symbolVal)
-import Lucid hiding (Attribute)
 import Lucid.Base hiding (Attribute)
 import Lucid.Html5
 import Network.HTTP.Req
+import qualified Network.HTTP.Req as Req
 import Network.Wai.Handler.Warp (run)
 import Servant
 import Servant.HTML.Lucid
 import Text.HTML.TagSoup hiding (parseTags, renderTags)
 import Text.HTML.TagSoup.Fast
 import Text.HTML.TagSoup.Match (anyAttrValue, tagOpen, tagOpenNameLit)
+import Prelude hiding (elem)
 
 newtype HomePage = HomePage Text
 
 type StylesHref = "static"
 
+newtype Article = Article
+  { title :: Text
+  }
+  deriving (Show, Generic)
+
+instance FromJSON Article
+
+newtype RandomArticles = RandomArticle
+  { items :: [Article]
+  }
+  deriving (Show, Generic)
+
+instance FromJSON RandomArticles
+
 instance ToHtml HomePage where
   toHtml (HomePage page) = doc_ $ main_ $ do
-    iframe_ [src_ ("/wiki/" <> page)] ""
+    div_ [class_ "wiki-container"] $ do
+      div_ [class_ "blur"] $
+        iframe_ [src_ ("/wiki/" <> page)] ""
+      button_ [class_ "start-button"] "Start"
     div_ [class_ "stats-container"] $ do
       div_ [class_ "timer"] $ do
         h1_ "Timer"
@@ -47,15 +67,20 @@ type API =
 
 server :: Server API
 server =
-  return (HomePage "Mjölby")
+  return (HomePage "Adolf_Hitler")
     :<|> wikiHandler
     :<|> serveDirectoryWebApp "static"
   where
     wikiHandler :: Text -> Handler (Html ())
     wikiHandler page = runReq defaultHttpConfig $ do
-      bs <- responseBody <$> req Network.HTTP.Req.GET (https "en.wikipedia.org" /: "wiki" /: page) NoReqBody bsResponse mempty
+      bs <- responseBody <$> req Req.GET (https "en.wikipedia.org" /: "wiki" /: page) NoReqBody bsResponse mempty
       let tags = map modify (parseTags bs)
       return $ toHtmlRaw (renderTags tags)
+
+fetchRandomArticle :: IO (Maybe Article)
+fetchRandomArticle = runReq defaultHttpConfig $ do
+  rArticle :: Maybe RandomArticles <- responseBody <$> req Req.GET (https "en.wikipedia.org" /: "api" /: "rest_v1" /: "page" /: "random" /: "title") NoReqBody jsonResponse mempty
+  return (fmap (head . items) rArticle)
 
 main :: IO ()
 main = run 8080 $ serve (Proxy :: Proxy API) server
@@ -86,7 +111,7 @@ displayNone = ("style", "display: none;")
 
 fixAttributes :: Attribute ByteString -> Attribute ByteString
 fixAttributes a = case a of
-  ("class", c) -> if c `S.member` hiddenClasses then displayNone else a
+  ("class", c) -> if any (`S.member` hiddenClasses) (split " " c) then displayNone else a
   ("id", c) -> if c `S.member` hiddenIds then displayNone else a
   ("href", h) -> ("href", fixHref h)
   ("src", h) -> ("src", toWiki h)
@@ -94,8 +119,9 @@ fixAttributes a = case a of
 
 fixHref :: ByteString -> ByteString
 fixHref h
-  | "/wiki/Help" `isPrefixOf` h = "#"
-  | otherwise = toAnother "//localhost:8080" h
+  | ":" `elem` h = "javascript:;"
+  | "/wiki/" `isPrefixOf` h = toAnother "//localhost:8080" h
+  | otherwise = "javascript:;"
 
 toWiki :: ByteString -> ByteString
 toWiki = toAnother "//en.wikipedia.org"
@@ -104,7 +130,7 @@ toAnother :: ByteString -> ByteString -> ByteString
 toAnother to h = if any (`isPrefixOf` h) ["//", "#"] then h else to <> h
 
 hiddenClasses :: Set ByteString
-hiddenClasses = S.fromList ["vector-header-container", "vector-dropdown mw-portlet mw-portlet-lang", "vector-page-toolbar", "mw-indicators", "reflist reflist-lower-alpha", "reflist reflist-columns references-column-width", "refbegin refbegin-columns references-column-width", "spoken-wikipedia sisterproject noprint haudio", "mw-footer-container", "navbar plainlinks hlist navbar-mini", "mw-editsection", "citation wikicite", "metadata plainlinks asbox stub", "navbox authority-control", "navbox", "catlinks", "extiw", "reflist", "mw-references-wrap", "box-Very_long plainlinks metadata ambox ambox-style ambox-very_long", "external text", "navbox-styles"]
+hiddenClasses = S.fromList ["vector-header-container", "reflist", "mw-editsection", "external", "metadata", "mw-footer-container", "side-box-text", "refbegin", "mw-portlet", "right-navigation", "vector-page-toolbar", "vector-body-before-content", "IPA", "authority-control", "sistersitebox"]
 
 hiddenIds :: Set ByteString
-hiddenIds = S.fromList ["References", "External_links"]
+hiddenIds = S.fromList ["References", "External_links", "Notes", "toc-External_links", "toc-Notes", "toc-References"]
