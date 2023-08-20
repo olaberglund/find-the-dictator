@@ -9,6 +9,7 @@
 
 module Main where
 
+import Control.Monad.IO.Class (MonadIO (..))
 import Data.Aeson (FromJSON)
 import Data.ByteString (ByteString, elem, isPrefixOf, split)
 import Data.Set (Set)
@@ -18,6 +19,7 @@ import GHC.Generics (Generic)
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import Lucid.Base hiding (Attribute)
 import Lucid.Html5
+import Lucid.Htmx
 import Network.HTTP.Req
 import qualified Network.HTTP.Req as Req
 import Network.Wai.Handler.Warp (run)
@@ -46,13 +48,15 @@ newtype RandomArticles = RandomArticle
 
 instance FromJSON RandomArticles
 
+startWiki = "Adolf_Hitler"
+
 instance ToHtml HomePage where
   toHtml (HomePage page) = doc_ $ main_ $ do
     div_ [class_ "wiki-container"] $ do
       div_ [class_ "blur"] $
         iframe_ [src_ ("/wiki/" <> page)] ""
-      button_ [class_ "start-button"] "Start"
-    div_ [class_ "stats-container"] $ do
+      button_ [hxGet_ "/play", hxSwap_ "innerHTML", hxTarget_ ".wiki-container", class_ "start-button"] "Start"
+    div_ [class_ "stats-container "] $ do
       div_ [class_ "timer"] $ do
         h1_ "Timer"
       div_ [class_ "leaderboard"] $ do
@@ -63,12 +67,14 @@ instance ToHtml HomePage where
 type API =
   Get '[HTML] HomePage
     :<|> "wiki" :> Capture "page" Text :> Get '[HTML] (Html ())
+    :<|> "play" :> Get '[HTML] (Html ())
     :<|> StylesHref :> Raw
 
 server :: Server API
 server =
-  return (HomePage "Adolf_Hitler")
+  return (HomePage startWiki)
     :<|> wikiHandler
+    :<|> playHandler
     :<|> serveDirectoryWebApp "static"
   where
     wikiHandler :: Text -> Handler (Html ())
@@ -76,6 +82,13 @@ server =
       bs <- responseBody <$> req Req.GET (https "en.wikipedia.org" /: "wiki" /: page) NoReqBody bsResponse mempty
       let tags = map modify (parseTags bs)
       return $ toHtmlRaw (renderTags tags)
+
+    playHandler :: Handler (Html ())
+    playHandler = do
+      article <- liftIO fetchRandomArticle
+      case article of
+        Nothing -> throwError err500
+        Just a -> return $ iframe_ [class_ "playing", src_ ("/wiki/" <> title a)] ""
 
 fetchRandomArticle :: IO (Maybe Article)
 fetchRandomArticle = runReq defaultHttpConfig $ do
@@ -90,6 +103,7 @@ doc_ b =
   doctypehtml_ $
     html_ $ do
       head_ $ do
+        useHtmx
         title_ "Find the dictator"
         meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1.0"]
         link_ [rel_ "stylesheet", href_ (urlpath @StylesHref <> "/styles.css")]
@@ -130,7 +144,7 @@ toAnother :: ByteString -> ByteString -> ByteString
 toAnother to h = if any (`isPrefixOf` h) ["//", "#"] then h else to <> h
 
 hiddenClasses :: Set ByteString
-hiddenClasses = S.fromList ["vector-header-container", "reflist", "mw-editsection", "external", "metadata", "mw-footer-container", "side-box-text", "refbegin", "mw-portlet", "right-navigation", "vector-page-toolbar", "vector-body-before-content", "IPA", "authority-control", "sistersitebox"]
+hiddenClasses = S.fromList ["vector-header-container", "reflist", "mw-editsection", "external", "metadata", "mw-footer-container", "refbegin", "mw-portlet", "right-navigation", "vector-page-toolbar", "vector-body-before-content", "IPA", "authority-control", "sistersitebox"]
 
 hiddenIds :: Set ByteString
 hiddenIds = S.fromList ["References", "External_links", "Notes", "toc-External_links", "toc-Notes", "toc-References"]
