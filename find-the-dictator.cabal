@@ -44,6 +44,7 @@ executable find-the-dictator
                     , req
                     , fast-tagsoup
                     , bytestring
+                    , stm
 
 
     hs-source-dirs:   app

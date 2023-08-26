@@ -9,12 +9,20 @@
 
 module Main where
 
+import Control.Concurrent.STM (modifyTVar, newTVar, newTVarIO, readTVar)
+import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO (..))
+import Control.Monad.STM
 import Data.Aeson (FromJSON)
-import Data.ByteString (ByteString, elem, isPrefixOf, split)
+import Data.ByteString (ByteString, elem, isPrefixOf, putStr, split)
+import Data.Function ((&))
+import Data.Functor ((<&>))
+import Data.Functor.Identity
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Text hiding (any, elem, filter, find, head, isPrefixOf, map, split)
+import Debug.Trace (trace, traceM, traceShowId)
+import GHC.Conc (TVar (TVar))
 import GHC.Generics (Generic)
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import Lucid.Base hiding (Attribute)
@@ -30,32 +38,41 @@ import Text.HTML.TagSoup.Fast
 import Text.HTML.TagSoup.Match (anyAttrValue, tagOpen, tagOpenNameLit)
 import Prelude hiding (elem)
 
-newtype HomePage = HomePage Text
+data HomePage = HomePage
 
-type StylesHref = "static"
+type Styles = "static"
 
-newtype Article = Article
-  { title :: Text
-  }
-  deriving (Show, Generic)
+type Start = "start"
 
-instance FromJSON Article
+type Wiki = "wiki"
 
-newtype RandomArticles = RandomArticle
-  { items :: [Article]
-  }
-  deriving (Show, Generic)
+type Wikipedia = "en.wikipedia.org"
 
-instance FromJSON RandomArticles
+newtype RandomTitle = RandomTitle
+  {title :: Text}
+  deriving (Generic)
 
-startWiki = "Adolf_Hitler"
+instance FromJSON RandomTitle
+
+newtype RandomArticleResponse = RandomArticleResponse
+  {items :: [RandomTitle]}
+  deriving (Generic)
+
+instance FromJSON RandomArticleResponse
+
+newtype Article = Article Text
+
+instance ToHtml Article where
+  toHtml (Article a) = iframe_ [class_ "playing", src_ (urlpath @Wiki <> "/" <> a)] ""
+
+  toHtmlRaw = toHtml
 
 instance ToHtml HomePage where
-  toHtml (HomePage page) = doc_ $ main_ $ do
+  toHtml HomePage = doc_ $ main_ $ do
     div_ [class_ "wiki-container"] $ do
       div_ [class_ "blur"] $
-        iframe_ [src_ ("/wiki/" <> page)] ""
-      button_ [hxGet_ "/play", hxSwap_ "innerHTML", hxTarget_ ".wiki-container", class_ "start-button"] "Start"
+        iframe_ [src_ $ "//" <> urlpath @Wikipedia <> "/wiki/Adolf_Hitler"] ""
+      button_ [hxGet_ (urlpath @Start), hxSwap_ "innerHTML", hxTarget_ ".wiki-container", class_ "start-button"] "Start"
     div_ [class_ "stats-container "] $ do
       div_ [class_ "timer"] $ do
         h1_ "Timer"
@@ -64,39 +81,54 @@ instance ToHtml HomePage where
 
   toHtmlRaw = toHtml
 
+newtype BreadCrumps = BreadCrumps
+  { crumbs :: [Text]
+  }
+  deriving (Show)
+
 type API =
   Get '[HTML] HomePage
-    :<|> "wiki" :> Capture "page" Text :> Get '[HTML] (Html ())
-    :<|> "play" :> Get '[HTML] (Html ())
-    :<|> StylesHref :> Raw
+    :<|> Wiki :> Capture "page" Text :> Get '[HTML] (Html ())
+    :<|> Start :> Get '[HTML] Article
+    :<|> Styles :> Raw
 
-server :: Server API
-server =
-  return (HomePage startWiki)
-    :<|> wikiHandler
-    :<|> playHandler
+fetchTags :: Text -> IO [Tag ByteString]
+fetchTags page =
+  req Req.GET (https (urlpath @Wikipedia) /: "wiki" /: page) NoReqBody bsResponse mempty
+    <&> parseTags . responseBody
+    & runReq defaultHttpConfig
+
+server :: TVar [Text] -> Server API
+server t =
+  return HomePage
+    :<|> handleWiki
+    :<|> handleBegin
     :<|> serveDirectoryWebApp "static"
   where
-    wikiHandler :: Text -> Handler (Html ())
-    wikiHandler page = runReq defaultHttpConfig $ do
-      bs <- responseBody <$> req Req.GET (https "en.wikipedia.org" /: "wiki" /: page) NoReqBody bsResponse mempty
-      let tags = map modify (parseTags bs)
-      return $ toHtmlRaw (renderTags tags)
+    handleWiki :: Text -> Handler (Html ())
+    handleWiki "Adolf_Hitler" = throwError err500
+    handleWiki page =
+      req Req.GET (https (urlpath @Wikipedia) /: urlpath @Wiki /: page) NoReqBody bsResponse mempty
+        <&> parseBody
+        & runReq defaultHttpConfig
 
-    playHandler :: Handler (Html ())
-    playHandler = do
+    parseBody :: BsResponse -> Html ()
+    parseBody = toHtmlRaw . renderTags . map modify . parseTags . responseBody
+
+    handleBegin :: Handler Article
+    handleBegin = do
       article <- liftIO fetchRandomArticle
       case article of
         Nothing -> throwError err500
-        Just a -> return $ iframe_ [class_ "playing", src_ ("/wiki/" <> title a)] ""
+        Just (RandomTitle t) -> return (Article t)
 
-fetchRandomArticle :: IO (Maybe Article)
+fetchRandomArticle :: IO (Maybe RandomTitle)
 fetchRandomArticle = runReq defaultHttpConfig $ do
-  rArticle :: Maybe RandomArticles <- responseBody <$> req Req.GET (https "en.wikipedia.org" /: "api" /: "rest_v1" /: "page" /: "random" /: "title") NoReqBody jsonResponse mempty
-  return (fmap (head . items) rArticle)
+  rArticles :: Maybe RandomArticleResponse <- responseBody <$> req Req.GET (https (urlpath @Wikipedia) /: "api" /: "rest_v1" /: "page" /: "random" /: "title") NoReqBody jsonResponse mempty
+  return (fmap (head . items) rArticles)
 
 main :: IO ()
-main = run 8080 $ serve (Proxy :: Proxy API) server
+main = newTVarIO [] >>= run 8080 . serve (Proxy :: Proxy API) . server
 
 doc_ :: (Monad m) => HtmlT m () -> HtmlT m ()
 doc_ b =
@@ -106,7 +138,7 @@ doc_ b =
         useHtmx
         title_ "Find the dictator"
         meta_ [name_ "viewport", content_ "width=device-width, initial-scale=1.0"]
-        link_ [rel_ "stylesheet", href_ (urlpath @StylesHref <> "/styles.css")]
+        link_ [rel_ "stylesheet", href_ (urlpath @Styles <> "/styles.css")]
       body_ b
 
 urlpath :: forall s. (KnownSymbol s) => Text
@@ -114,6 +146,7 @@ urlpath = pack (symbolVal (Proxy :: Proxy s))
 
 modify :: Tag ByteString -> Tag ByteString
 modify (TagOpen "link" attrs) = TagOpen "link" (map (\(a, v) -> if a == "href" then ("href", toWiki v) else (a, v)) attrs)
+modify (TagOpen "script" attrs) = TagOpen "script" [("src", "https://unpkg.com/htmx.org")]
 modify (TagOpen "a" attrs) | anyAttrValue (== "mw-file-description") attrs = TagOpen "a" [("style", "pointer-events: none; cursor: default;")]
 modify (TagOpen "a" attrs) = TagOpen "a" (map fixAttributes attrs <> [("style", "color: #3366cc;")])
 modify (TagOpen "sup" _) = TagOpen "sup" [displayNone]
@@ -148,3 +181,6 @@ hiddenClasses = S.fromList ["vector-header-container", "reflist", "mw-editsectio
 
 hiddenIds :: Set ByteString
 hiddenIds = S.fromList ["References", "External_links", "Notes", "toc-External_links", "toc-Notes", "toc-References"]
+
+-- known bugs / todo
+-- links that contains problematic characters, such as /wiki/Hot_R%26B/Hip-Hop_Songs (&)
