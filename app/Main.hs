@@ -81,22 +81,11 @@ instance ToHtml HomePage where
 
   toHtmlRaw = toHtml
 
-newtype BreadCrumps = BreadCrumps
-  { crumbs :: [Text]
-  }
-  deriving (Show)
-
 type API =
   Get '[HTML] HomePage
     :<|> Wiki :> Capture "page" Text :> Get '[HTML] (Html ())
     :<|> Start :> Get '[HTML] Article
     :<|> Styles :> Raw
-
-fetchTags :: Text -> IO [Tag ByteString]
-fetchTags page =
-  req Req.GET (https (urlpath @Wikipedia) /: "wiki" /: page) NoReqBody bsResponse mempty
-    <&> parseTags . responseBody
-    & runReq defaultHttpConfig
 
 server :: TVar [Text] -> Server API
 server t =
@@ -121,11 +110,11 @@ server t =
       case article of
         Nothing -> throwError err500
         Just (RandomTitle t) -> return (Article t)
-
-fetchRandomArticle :: IO (Maybe RandomTitle)
-fetchRandomArticle = runReq defaultHttpConfig $ do
-  rArticles :: Maybe RandomArticleResponse <- responseBody <$> req Req.GET (https (urlpath @Wikipedia) /: "api" /: "rest_v1" /: "page" /: "random" /: "title") NoReqBody jsonResponse mempty
-  return (fmap (head . items) rArticles)
+      where
+        fetchRandomArticle :: IO (Maybe RandomTitle)
+        fetchRandomArticle = runReq defaultHttpConfig $ do
+          rArticles :: Maybe RandomArticleResponse <- responseBody <$> req Req.GET (https (urlpath @Wikipedia) /: "api" /: "rest_v1" /: "page" /: "random" /: "title") NoReqBody jsonResponse mempty
+          return (fmap (head . items) rArticles)
 
 main :: IO ()
 main = newTVarIO [] >>= run 8080 . serve (Proxy :: Proxy API) . server
